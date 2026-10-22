@@ -1,8 +1,43 @@
 import re
+import shelve
+import atexit
 from collections import Counter, defaultdict
 from urllib.parse import urlparse, urljoin, urlunparse, parse_qsl
 
 from bs4 import BeautifulSoup, Comment
+
+# Module 5: persisted analytics for the report. A shelve file, like
+# Frontier's own save file, so a restart during deployment (up to 3 allowed)
+# doesn't throw away report progress.
+ANALYTICS_SAVE_FILE = "analytics.shelve"
+_analytics_db = None  # lazily opened - see _get_analytics_db
+
+# Standard English stopword list (per the assignment spec's linked list),
+# used to filter the word-frequency table for the report.
+STOPWORDS = frozenset({
+    "a", "about", "above", "after", "again", "against", "all", "am", "an",
+    "and", "any", "are", "aren't", "as", "at", "be", "because", "been",
+    "before", "being", "below", "between", "both", "but", "by", "can't",
+    "cannot", "could", "couldn't", "did", "didn't", "do", "does", "doesn't",
+    "doing", "don't", "down", "during", "each", "few", "for", "from",
+    "further", "had", "hadn't", "has", "hasn't", "have", "haven't",
+    "having", "he", "he'd", "he'll", "he's", "her", "here", "here's",
+    "hers", "herself", "him", "himself", "his", "how", "how's", "i",
+    "i'd", "i'll", "i'm", "i've", "if", "in", "into", "is", "isn't", "it",
+    "it's", "its", "itself", "let's", "me", "more", "most", "mustn't",
+    "my", "myself", "no", "nor", "not", "of", "off", "on", "once", "only",
+    "or", "other", "ought", "our", "ours", "ourselves", "out", "over",
+    "own", "same", "shan't", "she", "she'd", "she'll", "she's", "should",
+    "shouldn't", "so", "some", "such", "than", "that", "that's", "the",
+    "their", "theirs", "them", "themselves", "then", "there", "there's",
+    "these", "they", "they'd", "they'll", "they're", "they've", "this",
+    "those", "through", "to", "too", "under", "until", "up", "very",
+    "was", "wasn't", "we", "we'd", "we'll", "we're", "we've", "were",
+    "weren't", "what", "what's", "when", "when's", "where", "where's",
+    "which", "while", "who", "who's", "whom", "why", "why's", "with",
+    "won't", "would", "wouldn't", "you", "you'd", "you'll", "you're",
+    "you've", "your", "yours", "yourself", "yourselves",
+})
 
 ALLOWED_DOMAINS = (
     "ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu",
@@ -88,10 +123,15 @@ def extract_next_links(url, resp):
     except Exception:
         return list()
 
+    base_url = resolve_base_url(url, resp)
+
+    # Record analytics for every page we actually got real HTML back for,
+    # BEFORE the dead-page check below - a thin/low-value page still counts
+    # as a page you found, even though you won't crawl further from it.
+    record_page_visit(base_url, soup)
+
     if is_dead_or_low_value_page(soup):
         return list()
-
-    base_url = resolve_base_url(url, resp)
 
     next_links = []
     for anchor in soup.find_all("a", href=True):
@@ -247,17 +287,15 @@ def is_repeated_pattern_trap(parsed_url):
     return len(bucket) > MAX_PATH_PREFIX_VISITS
 
 
-def get_page_word_count(soup):
+def _get_visible_text(soup):
     """
-    Given a BeautifulSoup-parsed page, return the number of actual words in
-    the visible text. HTML markup must NOT count as words: drop
-    <script>/<style> (and anything else non-visible) before calling
-    .get_text(), then split on whitespace and count. Module 5's "longest
-    page" analytic will reuse this exact function.
+    Walk text nodes directly rather than calling soup.get_text() on the
+    whole tree, so we don't have to mutate/copy `soup` -
+    extract_next_links() still needs the original tree intact for
+    find_all("a") afterwards. Shared by get_page_word_count (which just
+    counts tokens) and extract_content_words (which keeps the actual
+    lowercased, stopword-filtered words) so both stay consistent.
     """
-    # Walk text nodes directly rather than soup.get_text() on the whole tree
-    # so we don't have to mutate/copy `soup` - extract_next_links() still
-    # needs the original tree intact for find_all("a") afterwards.
     visible_text_parts = []
     for node in soup.find_all(string=True):
         if isinstance(node, Comment):
@@ -269,8 +307,18 @@ def get_page_word_count(soup):
             continue
         visible_text_parts.append(str(node))
 
-    visible_text = " ".join(visible_text_parts)
-    return len(WORD_RE.findall(visible_text))
+    return " ".join(visible_text_parts)
+
+
+def get_page_word_count(soup):
+    """
+    Given a BeautifulSoup-parsed page, return the number of actual words in
+    the visible text. HTML markup must NOT count as words: drop
+    <script>/<style> (and anything else non-visible) before calling
+    .get_text(), then split on whitespace and count. Module 5's "longest
+    page" analytic will reuse this exact function.
+    """
+    return len(WORD_RE.findall(_get_visible_text(soup)))
 
 
 def is_dead_or_low_value_page(soup):
@@ -296,3 +344,136 @@ def resolve_base_url(url, resp):
     if resp.raw_response is not None and getattr(resp.raw_response, "url", None):
         return resp.raw_response.url
     return resp.url or url
+
+
+def _get_analytics_db():
+    """
+    Lazily open (or create) the shelve file that persists report analytics
+    across restarts, the same way Frontier persists frontier.shelve.
+    Returns a dict-like object with keys:
+      "unique_pages"     -> set of canonical (defragmented) URLs
+      "longest_page"     -> (url, word_count) tuple, the current max
+      "word_freq"        -> Counter of lowercased content word -> count
+      "subdomain_counts" -> Counter of ics.uci.edu subdomain host -> count
+    Initialize these four keys with setdefault the first time the shelve
+    file is created. Remember to call .sync() after any mutation (shelve
+    does not autosave), the same way Frontier.add_url does.
+    """
+    global _analytics_db
+    if _analytics_db is None:
+        # writeback=True so in-place mutations to the cached set/Counter
+        # values (e.g. db["unique_pages"].add(url)) get persisted on
+        # sync()/close() without having to reassign db[key] every time.
+        _analytics_db = shelve.open(ANALYTICS_SAVE_FILE, writeback=True)
+        _analytics_db.setdefault("unique_pages", set())
+        _analytics_db.setdefault("longest_page", (None, 0))
+        _analytics_db.setdefault("word_freq", Counter())
+        _analytics_db.setdefault("subdomain_counts", Counter())
+        _analytics_db.sync()
+        # Close explicitly at normal interpreter exit. Without this,
+        # Shelf.__del__ tries to flush-and-close during interpreter
+        # shutdown, by which point some builtin modules it needs for
+        # pickling may already be torn down - harmless (record_page_visit
+        # already .sync()s after every write) but it prints an ugly
+        # traceback on every run.
+        atexit.register(_analytics_db.close)
+
+    return _analytics_db
+
+
+def get_ics_subdomain(parsed_url):
+    """
+    Return the ics.uci.edu subdomain host for parsed_url (e.g.
+    "vision.ics.uci.edu"), or None if parsed_url isn't under ics.uci.edu at
+    all. Used to build the per-subdomain unique-page counts the report
+    asks for - only ics.uci.edu subdomains count, not cs/informatics/stat.
+    """
+    host = parsed_url.netloc.lower()
+    host = host.rsplit("@", 1)[-1]  # drop userinfo, if any
+    host = host.rsplit(":", 1)[0]   # drop port, if any
+
+    if host == "ics.uci.edu" or host.endswith(".ics.uci.edu"):
+        return host
+    return None
+
+
+def extract_content_words(soup):
+    """
+    Like get_page_word_count, but returns the actual lowercased word list
+    (with STOPWORDS filtered out) for the word-frequency table, instead of
+    just a count. Reuse the same text-extraction approach (skip
+    script/style/head/comments) so the two stay consistent.
+    """
+    words = WORD_RE.findall(_get_visible_text(soup).lower())
+    return [word for word in words if word not in STOPWORDS]
+
+
+def record_page_visit(url, soup):
+    """
+    Update the persisted analytics for one newly-downloaded page:
+    - add `url` to the unique-page set
+    - update the longest-page record if get_page_word_count(soup) beats
+      the current max
+    - add this page's content words (via extract_content_words) to the
+      global word-frequency table
+    - if get_ics_subdomain(urlparse(url)) is not None, count this page
+      under that subdomain
+    Called once per successfully-parsed HTML page from extract_next_links,
+    BEFORE the dead-page check - a thin page still counts as a page you
+    found, even if you don't crawl further from it.
+    """
+    db = _get_analytics_db()
+
+    # Uniqueness for the report is defined by URL with the fragment
+    # discarded, same rule as defragment_url/normalize_url use everywhere
+    # else - a page already passed through normalize_url is already
+    # fragment-free, but defragment again here so this stays correct even
+    # if called with a raw url.
+    canonical_url = defragment_url(url)
+    db["unique_pages"].add(canonical_url)
+
+    word_count = get_page_word_count(soup)
+    _, longest_count = db["longest_page"]
+    if word_count > longest_count:
+        db["longest_page"] = (canonical_url, word_count)
+
+    for word in extract_content_words(soup):
+        db["word_freq"][word] += 1
+
+    subdomain = get_ics_subdomain(urlparse(canonical_url))
+    if subdomain is not None:
+        db["subdomain_counts"][subdomain] += 1
+
+    db.sync()
+
+
+def generate_report(output_path="report.txt"):
+    """
+    NOT called by the crawler itself - run this once (or periodically, to
+    check progress) to produce the plain-text report answering all four
+    assignment questions from the persisted analytics: unique page count,
+    the longest page (URL + word count), the 50 most common words by
+    frequency, and the alphabetically-sorted list of ics.uci.edu
+    subdomains with their unique-page counts.
+    e.g. python3 -c "from scraper import generate_report; generate_report()"
+    """
+    db = _get_analytics_db()
+    longest_url, longest_count = db["longest_page"]
+
+    lines = []
+    lines.append("1. Unique pages found: {}".format(len(db["unique_pages"])))
+    lines.append("")
+    lines.append("2. Longest page: {} ({} words)".format(longest_url, longest_count))
+    lines.append("")
+    lines.append("3. 50 most common words:")
+    for word, count in db["word_freq"].most_common(50):
+        lines.append("{} - {}".format(word, count))
+    lines.append("")
+    lines.append("4. Subdomains found in ics.uci.edu:")
+    for subdomain in sorted(db["subdomain_counts"]):
+        lines.append("http://{}, {}".format(subdomain, db["subdomain_counts"][subdomain]))
+
+    with open(output_path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+    return output_path
