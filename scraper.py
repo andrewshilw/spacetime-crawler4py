@@ -2,9 +2,13 @@ import re
 from collections import Counter
 from urllib.parse import urlparse, urljoin, urlunparse, parse_qsl
 
+from bs4 import BeautifulSoup
+
 ALLOWED_DOMAINS = (
     "ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu",
 )
+
+MAX_CONTENT_SIZE = 5 * 1024 * 1024  # skip pages whose body is bigger than this
 
 MAX_URL_LENGTH = 200
 MAX_PATH_SEGMENTS = 10
@@ -32,7 +36,6 @@ def scraper(url, resp):
 
 
 def extract_next_links(url, resp):
-    # Implementation required.
     # url: the URL that was used to get the page
     # resp.url: the actual url of the page
     # resp.status: the status code returned by the server. 200 is OK, you got the page. Other numbers mean that there was some kind of problem.
@@ -41,11 +44,36 @@ def extract_next_links(url, resp):
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
-    #
-    # Use normalize_url(link, base_url=resp.url) on every link you pull out of
-    # the page before returning it - raw hrefs may be relative and/or carry a
-    # fragment, and is_valid() below assumes it's getting a normalized URL.
-    return list()
+    if resp.status != 200 or resp.raw_response is None:
+        return list()
+
+    content = resp.raw_response.content
+    if not content:
+        # 200 with an empty body - a dead URL, not a page with links on it.
+        return list()
+
+    if len(content) > MAX_CONTENT_SIZE:
+        return list()
+
+    content_type = resp.raw_response.headers.get("Content-Type", "")
+    if content_type and "html" not in content_type.lower():
+        return list()
+
+    try:
+        soup = BeautifulSoup(content, "lxml")
+    except Exception:
+        return list()
+
+    base_url = resp.raw_response.url or resp.url or url
+
+    next_links = []
+    for anchor in soup.find_all("a", href=True):
+        href = anchor["href"].strip()
+        if not href or href.lower().startswith(("javascript:", "mailto:", "tel:")):
+            continue
+        next_links.append(normalize_url(href, base_url=base_url))
+
+    return next_links
 
 
 def defragment_url(url):
