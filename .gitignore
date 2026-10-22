@@ -108,3 +108,7 @@ venv.bak/
 
 *.full.py
 *.shelve
+
+# Local AI-assistant context, not part of the submitted crawler
+CLAUDE.md
+CLAUDE.MD
