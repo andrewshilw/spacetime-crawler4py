@@ -1,14 +1,28 @@
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from urllib.parse import urlparse, urljoin, urlunparse, parse_qsl
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 
 ALLOWED_DOMAINS = (
     "ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu",
 )
 
 MAX_CONTENT_SIZE = 5 * 1024 * 1024  # skip pages whose body is bigger than this
+
+MAX_PATH_PREFIX_VISITS = 100   # module 3: see is_repeated_pattern_trap
+MIN_WORDS_FOR_REAL_PAGE = 50   # module 3: see is_dead_or_low_value_page
+
+# Module 3 state: lives only for this crawl process. Does NOT persist across
+# restarts the way Frontier's shelve file does.
+# Maps (netloc, first_path_segment) -> set of distinct normalized URLs seen
+# under that bucket. A set, not a counter, so that the SAME popular page
+# being linked from hundreds of other pages doesn't look like hundreds of
+# distinct trap URLs.
+_path_prefix_seen_urls = defaultdict(set)
+
+WORD_RE = re.compile(r"[a-zA-Z0-9']+")  # module 3: see get_page_word_count
+NON_VISIBLE_TAGS = ("script", "style", "head", "noscript", "template")
 
 MAX_URL_LENGTH = 200
 MAX_PATH_SEGMENTS = 10
@@ -32,7 +46,17 @@ DISALLOWED_EXTENSIONS = re.compile(
 
 def scraper(url, resp):
     links = extract_next_links(url, resp)
-    return [link for link in links if is_valid(link)]
+    valid_links = []
+    for link in links:
+        if not is_valid(link):
+            continue
+        # Deliberately NOT folded into is_valid(): Frontier._parse_save_file
+        # also calls is_valid() on every already-seen URL when resuming from
+        # frontier.shelve, which would double count visits on every restart.
+        if is_repeated_pattern_trap(urlparse(link)):
+            continue
+        valid_links.append(link)
+    return valid_links
 
 
 def extract_next_links(url, resp):
@@ -64,7 +88,10 @@ def extract_next_links(url, resp):
     except Exception:
         return list()
 
-    base_url = resp.raw_response.url or resp.url or url
+    if is_dead_or_low_value_page(soup):
+        return list()
+
+    base_url = resolve_base_url(url, resp)
 
     next_links = []
     for anchor in soup.find_all("a", href=True):
@@ -195,3 +222,77 @@ def is_valid(url):
     except TypeError:
         print ("TypeError for ", parsed)
         raise
+
+
+def is_repeated_pattern_trap(parsed_url):
+    """
+    Catches traps no single URL reveals on its own (is_likely_trap above only
+    looks at one URL in isolation). Buckets every candidate link by
+    (netloc, first path segment) and tracks the set of DISTINCT URLs seen in
+    that bucket, returning True once it exceeds MAX_PATH_PREFIX_VISITS - e.g.
+    a calendar or faceted-search section generating thousands of distinct-
+    looking but low-value URLs under the same section. Counting distinct
+    URLs (not raw hits) means a single popular page linked from hundreds of
+    other pages doesn't falsely look like a trap.
+    Side effect: adds to _path_prefix_seen_urls. Only called from scraper(),
+    once per candidate link - see the comment in scraper().
+    """
+    segments = [s for s in parsed_url.path.split("/") if s]
+    first_segment = segments[0] if segments else ""
+    bucket_key = (parsed_url.netloc.lower(), first_segment)
+
+    bucket = _path_prefix_seen_urls[bucket_key]
+    bucket.add(urlunparse(parsed_url))
+
+    return len(bucket) > MAX_PATH_PREFIX_VISITS
+
+
+def get_page_word_count(soup):
+    """
+    Given a BeautifulSoup-parsed page, return the number of actual words in
+    the visible text. HTML markup must NOT count as words: drop
+    <script>/<style> (and anything else non-visible) before calling
+    .get_text(), then split on whitespace and count. Module 5's "longest
+    page" analytic will reuse this exact function.
+    """
+    # Walk text nodes directly rather than soup.get_text() on the whole tree
+    # so we don't have to mutate/copy `soup` - extract_next_links() still
+    # needs the original tree intact for find_all("a") afterwards.
+    visible_text_parts = []
+    for node in soup.find_all(string=True):
+        if isinstance(node, Comment):
+            continue
+        # find_parent checks ALL ancestors, not just the immediate parent -
+        # e.g. text inside <head><title>...</title></head> has an immediate
+        # parent of "title", but "head" is still an ancestor.
+        if node.find_parent(NON_VISIBLE_TAGS) is not None:
+            continue
+        visible_text_parts.append(str(node))
+
+    visible_text = " ".join(visible_text_parts)
+    return len(WORD_RE.findall(visible_text))
+
+
+def is_dead_or_low_value_page(soup):
+    """
+    True iff this 200-status page has essentially no real content - i.e.
+    get_page_word_count(soup) is below MIN_WORDS_FOR_REAL_PAGE. This is the
+    function you'll point to in the TA interview when asked to define "low
+    information value." (If you do the near-duplicate-detection extra
+    credit, boilerplate/template detection belongs here too.)
+    """
+    return get_page_word_count(soup) < MIN_WORDS_FOR_REAL_PAGE
+
+
+def resolve_base_url(url, resp):
+    """
+    Return the URL that relative links on the page should be resolved
+    against (and, in Module 5, the canonical URL to record stats against):
+    if resp.raw_response.url differs from the requested `url`, the server
+    redirected you mid-fetch, and the page you actually got lives at
+    raw_response.url - that's what relative hrefs on it are relative to,
+    not the URL you originally requested.
+    """
+    if resp.raw_response is not None and getattr(resp.raw_response, "url", None):
+        return resp.raw_response.url
+    return resp.url or url
