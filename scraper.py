@@ -67,6 +67,12 @@ TRAP_QUERY_KEYS = {
     "sessionid", "sid", "phpsessid", "jsessionid",
     "year", "month", "day", "date", "ical",
 }
+# Calendar/event-listing traps often encode the date in the PATH instead of
+# a query string (e.g. /events/2026-05-13, /events/week/2026-05-18), which
+# TRAP_QUERY_KEYS above can't see - each day/week is a distinct, real-
+# looking URL, so is_repeated_pattern_trap only catches it after wasting
+# MAX_PATH_PREFIX_VISITS requests. Catch it directly instead.
+DATE_SEGMENT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$|^\d{4}-\d{2}$")
 
 DISALLOWED_EXTENSIONS = re.compile(
     r".*\.(css|js|bmp|gif|jpe?g|ico"
@@ -214,6 +220,11 @@ def is_likely_trap(parsed_url):
     - excessive path depth or URL length
     - query strings that look like calendar/session/sort permutations
       (e.g. ?year=..&month=.., ?sessionid=.., ?page=9999)
+    - calendar/event dates encoded directly in the path (e.g.
+      /events/2026-05-13, /events/week/2026-05-18) - caught live while
+      crawling ics.uci.edu/events, where every day/week is a distinct,
+      real-looking URL that would otherwise take MAX_PATH_PREFIX_VISITS
+      requests to notice (see is_repeated_pattern_trap)
     This is a FIRST line of defense; a later module adds stateful/content-based
     trap detection on top of this.
     """
@@ -227,11 +238,17 @@ def is_likely_trap(parsed_url):
     if segments and max(Counter(segments).values()) > MAX_SEGMENT_REPEATS:
         return True
 
+    if any(DATE_SEGMENT_RE.match(segment) for segment in segments):
+        return True
+
     query_pairs = parse_qsl(parsed_url.query)
     if len(query_pairs) > MAX_QUERY_PARAMS:
         return True
 
-    if any(key.lower() in TRAP_QUERY_KEYS for key, _ in query_pairs):
+    # Substring match, not exact - catches "eventDate"/"startDate" etc, not
+    # just a bare "date" key (seen live: ?eventDate=2026-05-25 on a
+    # Tribe-Events-style calendar page).
+    if any(trap_key in key.lower() for key, _ in query_pairs for trap_key in TRAP_QUERY_KEYS):
         return True
 
     return False
