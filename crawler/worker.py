@@ -44,3 +44,10 @@ class Worker(Thread):
             time.sleep(self.config.time_delay)
         else:
             self.logger.info("Shutdown requested. Stopping Crawler.")
+
+        # record_page_visit() only writes analytics.pkl to disk every
+        # ANALYTICS_SAVE_INTERVAL pages (see scraper.py), not every single
+        # one - force one last unconditional save here so neither a normal
+        # completion nor a graceful stop ever loses the last few pages'
+        # worth to that batching.
+        scraper.flush_analytics_db()

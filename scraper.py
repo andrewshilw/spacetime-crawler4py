@@ -38,6 +38,23 @@ _sitemap_fetched = set()  # netlocs whose sitemap we've already pulled, so we on
 ANALYTICS_SAVE_FILE = "analytics.pkl"
 _analytics_db = None  # lazily loaded - see _get_analytics_db
 
+# Save to disk every N pages instead of every single one. record_page_visit
+# always updates the in-memory dict immediately; only the disk write is
+# batched. Without this, _save_analytics_db() re-pickles the ENTIRE
+# word_freq dict on every page - fine at the ~6000-page scale tested so
+# far, but over a multi-day deployment crawl reaching tens of thousands of
+# distinct words, that write only gets bigger and slower over time,
+# especially on a networked filesystem (e.g. an NFS-mounted home directory
+# on openlab) where it could end up slower than the politeness delay
+# itself and throttle the whole crawl. flush_analytics_db() (called once a
+# worker's loop exits, win or shutdown) always does one final unbatched
+# save, so a normal stop never loses the last few pages to this batching -
+# only a hard crash (SIGKILL) can lose up to ANALYTICS_SAVE_INTERVAL - 1
+# pages' worth, same bounded-loss tradeoff as POLITENESS already accepts
+# for timing.
+ANALYTICS_SAVE_INTERVAL = 20
+_pages_since_last_save = 0
+
 # Where backups of analytics.pkl go before --restart wipes the live file,
 # and where regenerate_report_from_backup() looks for one to recover from.
 ANALYTICS_BACKUP_DIR = "reports"
@@ -683,8 +700,9 @@ def _get_analytics_db():
       "longest_page"     -> (url, word_count) tuple, the current max
       "word_freq"        -> Counter of lowercased content word -> count
       "subdomain_counts" -> Counter of ics.uci.edu subdomain host -> count
-    Call _save_analytics_db() after any mutation to persist it - this dict
-    is plain in-memory otherwise, nothing autosaves it.
+    Call _save_analytics_db() (or the throttled/flush variants below)
+    after any mutation to persist it - this dict is plain in-memory
+    otherwise, nothing autosaves it.
     """
     global _analytics_db
     if _analytics_db is None:
@@ -713,6 +731,35 @@ def _save_analytics_db():
     with open(tmp_path, "wb") as f:
         pickle.dump(_get_analytics_db(), f)
     os.replace(tmp_path, ANALYTICS_SAVE_FILE)
+
+
+def _save_analytics_db_throttled():
+    """
+    Save at most once every ANALYTICS_SAVE_INTERVAL calls, instead of
+    every single one - see the comment above ANALYTICS_SAVE_INTERVAL for
+    why. Called from record_page_visit; use _save_analytics_db() directly
+    (or flush_analytics_db()) when you need an unconditional save.
+    """
+    global _pages_since_last_save
+    _pages_since_last_save += 1
+    if _pages_since_last_save >= ANALYTICS_SAVE_INTERVAL:
+        _save_analytics_db()
+        _pages_since_last_save = 0
+
+
+def flush_analytics_db():
+    """
+    Force an unconditional save regardless of ANALYTICS_SAVE_INTERVAL
+    batching. Called once from Worker.run(), right after its loop exits
+    (frontier empty OR shutdown requested) - so neither a normal
+    completion nor a graceful Ctrl+C/kill ever loses the last few pages'
+    analytics to the save-interval batching above; only a hard crash
+    (SIGKILL) can still lose up to ANALYTICS_SAVE_INTERVAL - 1 pages.
+    """
+    global _pages_since_last_save
+    if _analytics_db is not None:
+        _save_analytics_db()
+    _pages_since_last_save = 0
 
 
 def get_ics_subdomain(parsed_url):
@@ -778,7 +825,7 @@ def record_page_visit(url, soup):
     if subdomain is not None:
         db["subdomain_counts"][subdomain] += 1
 
-    _save_analytics_db()
+    _save_analytics_db_throttled()
 
 
 def generate_report(output_path="report.txt", analytics_path=None):
