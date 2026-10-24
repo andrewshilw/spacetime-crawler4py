@@ -162,8 +162,14 @@ def extract_next_links(url, resp):
     if len(content) > MAX_CONTENT_SIZE:
         return list()
 
+    # Fail CLOSED, not open: a missing Content-Type must NOT be treated as
+    # "assume HTML". Confirmed live: a binary kernel image (zImage_paapi,
+    # no file extension to catch it on) slipped through here with an
+    # empty content_type, got fed to BeautifulSoup as if it were text, and
+    # flooded the word-frequency table with single-character garbage from
+    # misparsed binary bytes - corrupting the whole report's word stats.
     content_type = resp.raw_response.headers.get("Content-Type", "")
-    if content_type and "html" not in content_type.lower():
+    if "html" not in content_type.lower():
         return list()
 
     try:
