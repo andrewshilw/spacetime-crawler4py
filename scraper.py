@@ -1,16 +1,25 @@
 import re
-import shelve
-import atexit
+import os
+import pickle
 from collections import Counter, defaultdict
 from urllib.parse import urlparse, urljoin, urlunparse, parse_qsl
 
 from bs4 import BeautifulSoup, Comment
 
-# Module 5: persisted analytics for the report. A shelve file, like
-# Frontier's own save file, so a restart during deployment (up to 3 allowed)
-# doesn't throw away report progress.
-ANALYTICS_SAVE_FILE = "analytics.shelve"
-_analytics_db = None  # lazily opened - see _get_analytics_db
+# Module 5: persisted analytics for the report, so a restart during
+# deployment (up to 3 allowed) doesn't throw away report progress.
+#
+# NOT backed by shelve/dbm - macOS only has dbm.ndbm available (no
+# dbm.gnu), whose underlying Berkeley DB hash format has a fixed-capacity
+# hash table. Confirmed by hand mid-crawl: once word_freq grew large
+# enough, writing it back crashed the whole process with
+# "_dbm.error: cannot add item to database" / "HASH: Out of overflow
+# pages" - an uncaught exception that killed every worker thread, losing
+# all progress. A single pickled file has no such limit, and writing it
+# via a temp file + os.replace (atomic on POSIX) is also inherently
+# crash-safe against a kill mid-write, unlike dbm.
+ANALYTICS_SAVE_FILE = "analytics.pkl"
+_analytics_db = None  # lazily loaded - see _get_analytics_db
 
 # Standard English stopword list (per the assignment spec's linked list),
 # used to filter the word-frequency table for the report.
@@ -365,37 +374,42 @@ def resolve_base_url(url, resp):
 
 def _get_analytics_db():
     """
-    Lazily open (or create) the shelve file that persists report analytics
-    across restarts, the same way Frontier persists frontier.shelve.
-    Returns a dict-like object with keys:
+    Lazily load (or create) the dict that persists report analytics across
+    restarts. Returns a plain dict with keys:
       "unique_pages"     -> set of canonical (defragmented) URLs
       "longest_page"     -> (url, word_count) tuple, the current max
       "word_freq"        -> Counter of lowercased content word -> count
       "subdomain_counts" -> Counter of ics.uci.edu subdomain host -> count
-    Initialize these four keys with setdefault the first time the shelve
-    file is created. Remember to call .sync() after any mutation (shelve
-    does not autosave), the same way Frontier.add_url does.
+    Call _save_analytics_db() after any mutation to persist it - this dict
+    is plain in-memory otherwise, nothing autosaves it.
     """
     global _analytics_db
     if _analytics_db is None:
-        # writeback=True so in-place mutations to the cached set/Counter
-        # values (e.g. db["unique_pages"].add(url)) get persisted on
-        # sync()/close() without having to reassign db[key] every time.
-        _analytics_db = shelve.open(ANALYTICS_SAVE_FILE, writeback=True)
-        _analytics_db.setdefault("unique_pages", set())
-        _analytics_db.setdefault("longest_page", (None, 0))
-        _analytics_db.setdefault("word_freq", Counter())
-        _analytics_db.setdefault("subdomain_counts", Counter())
-        _analytics_db.sync()
-        # Close explicitly at normal interpreter exit. Without this,
-        # Shelf.__del__ tries to flush-and-close during interpreter
-        # shutdown, by which point some builtin modules it needs for
-        # pickling may already be torn down - harmless (record_page_visit
-        # already .sync()s after every write) but it prints an ugly
-        # traceback on every run.
-        atexit.register(_analytics_db.close)
+        if os.path.exists(ANALYTICS_SAVE_FILE):
+            with open(ANALYTICS_SAVE_FILE, "rb") as f:
+                _analytics_db = pickle.load(f)
+        else:
+            _analytics_db = {
+                "unique_pages": set(),
+                "longest_page": (None, 0),
+                "word_freq": Counter(),
+                "subdomain_counts": Counter(),
+            }
 
     return _analytics_db
+
+
+def _save_analytics_db():
+    """
+    Atomically persist the analytics dict to ANALYTICS_SAVE_FILE: write to
+    a temp file, then os.replace() it into place. os.replace is atomic on
+    POSIX, so a kill mid-write leaves the previous, still-valid file in
+    place rather than a half-written one.
+    """
+    tmp_path = ANALYTICS_SAVE_FILE + ".tmp"
+    with open(tmp_path, "wb") as f:
+        pickle.dump(_get_analytics_db(), f)
+    os.replace(tmp_path, ANALYTICS_SAVE_FILE)
 
 
 def get_ics_subdomain(parsed_url):
@@ -461,7 +475,7 @@ def record_page_visit(url, soup):
     if subdomain is not None:
         db["subdomain_counts"][subdomain] += 1
 
-    db.sync()
+    _save_analytics_db()
 
 
 def generate_report(output_path="report.txt"):
