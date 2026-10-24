@@ -43,7 +43,7 @@ def main(config_file, restart):
     config.cache_server = get_cache_server(config, restart)
     # So is_valid()/scraper() can fetch robots.txt/sitemap.xml through the
     # cache server (see scraper.set_crawler_config's docstring).
-    scraper.set_crawler_config(config)
+    scraper.set_crawler_config(config, restart=restart)
     crawler = Crawler(config, restart)
     crawler.start()
 

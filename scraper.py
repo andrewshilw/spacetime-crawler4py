@@ -305,16 +305,28 @@ def is_likely_trap(parsed_url):
     return False
 
 
-def set_crawler_config(config):
+def set_crawler_config(config, restart=False):
     """
     Called once at startup (from launch.py) so is_allowed_by_robots() and
     get_sitemap_urls() can fetch robots.txt/sitemap.xml through the cache
     server. Tests that never call this still work: every function below
     fails open (treats robots.txt as "allow everything", sitemap as
     empty) when _crawler_config is None, instead of raising.
+
+    restart=True also wipes ANALYTICS_SAVE_FILE, mirroring what Frontier
+    already does for frontier.shelve. Without this, _get_analytics_db()
+    would silently keep loading old analytics on every run regardless of
+    --restart (it only ever checks "does the file exist," never looks at
+    restart at all) - meaning a "fresh start" would quietly keep adding
+    to a stale, possibly-corrupted word_freq/unique_pages from a previous
+    run instead of actually starting over.
     """
-    global _crawler_config
+    global _crawler_config, _analytics_db
     _crawler_config = config
+
+    if restart and os.path.exists(ANALYTICS_SAVE_FILE):
+        os.remove(ANALYTICS_SAVE_FILE)
+    _analytics_db = None
 
 
 def _fetch_text_via_cache(url):
