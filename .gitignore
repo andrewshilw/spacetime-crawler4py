@@ -116,6 +116,8 @@ venv.bak/
 # Generated at crawl time, not source
 crawl_run.log
 report.txt
+analytics.pkl
+analytics.pkl.tmp
 
 # Local AI-assistant context, not part of the submitted crawler
 CLAUDE.md
