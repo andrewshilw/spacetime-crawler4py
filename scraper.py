@@ -1,7 +1,10 @@
 import re
 import os
+import glob
+import shutil
 import pickle
 import urllib.robotparser
+from datetime import datetime
 from collections import Counter, defaultdict, deque
 from urllib.parse import urlparse, urljoin, urlunparse, parse_qsl
 from xml.etree import ElementTree
@@ -34,6 +37,11 @@ _sitemap_fetched = set()  # netlocs whose sitemap we've already pulled, so we on
 # crash-safe against a kill mid-write, unlike dbm.
 ANALYTICS_SAVE_FILE = "analytics.pkl"
 _analytics_db = None  # lazily loaded - see _get_analytics_db
+
+# Where backups of analytics.pkl go before --restart wipes the live file,
+# and where regenerate_report_from_backup() looks for one to recover from.
+ANALYTICS_BACKUP_DIR = "reports"
+ANALYTICS_BACKUP_PATTERN = "analytics_backup_*.pkl"
 
 # Standard English stopword list (per the assignment spec's linked list),
 # used to filter the word-frequency table for the report.
@@ -319,14 +327,48 @@ def set_crawler_config(config, restart=False):
     --restart (it only ever checks "does the file exist," never looks at
     restart at all) - meaning a "fresh start" would quietly keep adding
     to a stale, possibly-corrupted word_freq/unique_pages from a previous
-    run instead of actually starting over.
+    run instead of actually starting over. Backs the file up first (see
+    backup_analytics_db) so a --restart never destroys the only copy of
+    a crawl's analytics without a recovery path.
     """
     global _crawler_config, _analytics_db
     _crawler_config = config
 
     if restart and os.path.exists(ANALYTICS_SAVE_FILE):
+        backup_analytics_db()
         os.remove(ANALYTICS_SAVE_FILE)
     _analytics_db = None
+
+
+def backup_analytics_db():
+    """
+    Copy the current ANALYTICS_SAVE_FILE to a timestamped backup under
+    ANALYTICS_BACKUP_DIR, if it exists. Returns the backup path, or None
+    if there was no live analytics.pkl to back up. Safe to call any time,
+    not just from set_crawler_config - e.g. before manually deleting
+    analytics.pkl yourself.
+    """
+    if not os.path.exists(ANALYTICS_SAVE_FILE):
+        return None
+
+    os.makedirs(ANALYTICS_BACKUP_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = os.path.join(
+        ANALYTICS_BACKUP_DIR, f"analytics_backup_{timestamp}.pkl")
+    shutil.copy2(ANALYTICS_SAVE_FILE, backup_path)
+    return backup_path
+
+
+def find_latest_analytics_backup():
+    """
+    Return the path of the most recently created analytics backup under
+    ANALYTICS_BACKUP_DIR (by file modification time), or None if there
+    isn't one.
+    """
+    backups = glob.glob(os.path.join(ANALYTICS_BACKUP_DIR, ANALYTICS_BACKUP_PATTERN))
+    if not backups:
+        return None
+    return max(backups, key=os.path.getmtime)
 
 
 def _fetch_text_via_cache(url):
@@ -739,7 +781,7 @@ def record_page_visit(url, soup):
     _save_analytics_db()
 
 
-def generate_report(output_path="report.txt"):
+def generate_report(output_path="report.txt", analytics_path=None):
     """
     NOT called by the crawler itself - run this once (or periodically, to
     check progress) to produce the plain-text report answering all four
@@ -748,8 +790,17 @@ def generate_report(output_path="report.txt"):
     frequency, and the alphabetically-sorted list of ics.uci.edu
     subdomains with their unique-page counts.
     e.g. python3 -c "from scraper import generate_report; generate_report()"
+
+    analytics_path: if given, load analytics from this file instead of
+    the live ANALYTICS_SAVE_FILE - used by regenerate_report_from_backup
+    to rebuild a lost report.txt from a backup snapshot without touching
+    the live crawl's in-memory analytics state.
     """
-    db = _get_analytics_db()
+    if analytics_path is not None:
+        with open(analytics_path, "rb") as f:
+            db = pickle.load(f)
+    else:
+        db = _get_analytics_db()
     longest_url, longest_count = db["longest_page"]
 
     lines = []
@@ -769,3 +820,26 @@ def generate_report(output_path="report.txt"):
         f.write("\n".join(lines) + "\n")
 
     return output_path
+
+
+def regenerate_report_from_backup(backup_path=None, output_path="report.txt"):
+    """
+    Rebuild report.txt (or another output_path) from a backed-up
+    analytics.pkl snapshot - for when report.txt (and/or the live
+    analytics.pkl) has been lost or deleted, but a backup made by
+    backup_analytics_db() still exists.
+
+    If backup_path isn't given, uses the most recently created backup
+    found by find_latest_analytics_backup(). Raises FileNotFoundError if
+    no backup path is given and none can be found.
+
+    e.g. python3 -c "from scraper import regenerate_report_from_backup; regenerate_report_from_backup()"
+    """
+    if backup_path is None:
+        backup_path = find_latest_analytics_backup()
+    if backup_path is None:
+        raise FileNotFoundError(
+            "No analytics backup found under {} to regenerate a report "
+            "from.".format(ANALYTICS_BACKUP_DIR))
+
+    return generate_report(output_path=output_path, analytics_path=backup_path)
