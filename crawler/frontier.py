@@ -1,6 +1,7 @@
 import os
 import shelve
 
+from collections import deque
 from threading import Thread, RLock
 from queue import Queue, Empty
 
@@ -11,7 +12,16 @@ class Frontier(object):
     def __init__(self, config, restart):
         self.logger = get_logger("FRONTIER")
         self.config = config
-        self.to_be_downloaded = list()
+        # deque used as a FIFO queue (popleft), not a stack. The original
+        # list + .pop() (no index) is LIFO: since all 4 seed URLs are
+        # queued before anything else, and every newly-discovered link gets
+        # appended and is immediately the next one popped, that order dives
+        # depth-first into whichever domain happens to come up first - in
+        # practice, meaning the crawl can get stuck going deep into one
+        # domain and never meaningfully reach the other three. FIFO instead
+        # explores roughly breadth-first, which keeps progress spread
+        # across all four seed domains as they're discovered.
+        self.to_be_downloaded = deque()
         
         if not os.path.exists(self.config.save_file) and not restart:
             # Save file does not exist, but request to load save.
@@ -49,7 +59,7 @@ class Frontier(object):
 
     def get_tbd_url(self):
         try:
-            return self.to_be_downloaded.pop()
+            return self.to_be_downloaded.popleft()
         except IndexError:
             return None
 

@@ -1,0 +1,65 @@
+1. Unique pages found: 15
+
+2. Longest page: https://ics.uci.edu/ (1188 words)
+
+3. 50 most common words:
+research - 182
+ics - 172
+us - 128
+faculty - 98
+undergraduate - 96
+learning - 96
+graduate - 94
+access - 94
+student - 91
+science - 84
+view - 82
+irvine - 80
+computer - 78
+statistics - 75
+bren - 72
+donald - 71
+data - 70
+news - 70
+hall - 67
+students - 65
+series - 63
+uc - 63
+programs - 60
+systems - 60
+follow - 59
+2026 - 59
+informatics - 57
+seminar - 57
+members - 56
+community - 54
+ai - 54
+health - 51
+information - 51
+events - 50
+spotlights - 49
+academic - 43
+honors - 43
+00 - 43
+content - 42
+computing - 42
+resources - 40
+current - 40
+school - 38
+home - 38
+future - 37
+alumni - 37
+professor - 37
+april - 37
+website - 37
+machine - 36
+
+4. Subdomains found in ics.uci.edu:
+http://cs.ics.uci.edu, 2
+http://hpi.ics.uci.edu, 1
+http://ics.uci.edu, 7
+http://informatics.ics.uci.edu, 1
+http://oai.ics.uci.edu, 1
+http://stat.ics.uci.edu, 2
+http://summeracademy.ics.uci.edu, 1
+http://tutoring.ics.uci.edu, 1
