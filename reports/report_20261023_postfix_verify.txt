@@ -1,0 +1,68 @@
+1. Unique pages found: 243
+
+2. Longest page: https://cml.ics.uci.edu/aiml/ (5380 words)
+
+3. 50 most common words:
+ics - 3555
+research - 3204
+student - 2049
+us - 2012
+science - 2004
+2026 - 1873
+graduate - 1816
+learning - 1733
+computer - 1728
+undergraduate - 1723
+irvine - 1659
+faculty - 1589
+news - 1521
+community - 1494
+uc - 1383
+view - 1358
+students - 1262
+honors - 1182
+informatics - 1166
+alumni - 1148
+awards - 1096
+spotlights - 1059
+share - 1055
+programs - 1012
+follow - 968
+statistics - 945
+text - 929
+contrast - 925
+industry - 810
+academy - 807
+machine - 801
+computing - 798
+data - 792
+future - 783
+hall - 783
+events - 775
+academic - 770
+s - 766
+get - 743
+corporate - 727
+accessibility - 717
+advising - 715
+involved - 711
+school - 678
+software - 646
+bren - 645
+donald - 639
+experience - 637
+access - 636
+impact - 636
+
+4. Subdomains found in ics.uci.edu:
+http://cml.ics.uci.edu, 2
+http://create.ics.uci.edu, 1
+http://cs.ics.uci.edu, 4
+http://hpi.ics.uci.edu, 1
+http://ics.uci.edu, 228
+http://industryshowcase.ics.uci.edu, 1
+http://informatics.ics.uci.edu, 3
+http://oai.ics.uci.edu, 1
+http://stat.ics.uci.edu, 4
+http://summeracademy.ics.uci.edu, 1
+http://tutoring.ics.uci.edu, 1
