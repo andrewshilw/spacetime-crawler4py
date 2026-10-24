@@ -16,6 +16,7 @@ from utils.server_registration import get_cache_server
 from utils.config import Config
 from crawler import Crawler
 from crawler.worker import Worker
+import scraper
 
 
 def _request_shutdown(signum, frame):
@@ -40,6 +41,9 @@ def main(config_file, restart):
     cparser.read(config_file)
     config = Config(cparser)
     config.cache_server = get_cache_server(config, restart)
+    # So is_valid()/scraper() can fetch robots.txt/sitemap.xml through the
+    # cache server (see scraper.set_crawler_config's docstring).
+    scraper.set_crawler_config(config)
     crawler = Crawler(config, restart)
     crawler.start()
 

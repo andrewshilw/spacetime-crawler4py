@@ -1,10 +1,24 @@
 import re
 import os
 import pickle
-from collections import Counter, defaultdict
+import urllib.robotparser
+from collections import Counter, defaultdict, deque
 from urllib.parse import urlparse, urljoin, urlunparse, parse_qsl
+from xml.etree import ElementTree
 
 from bs4 import BeautifulSoup, Comment
+
+from utils.download import download as _cache_download
+
+# Extra credit (+1): robots.txt / sitemap checking.
+# launch.py calls set_crawler_config() once at startup so is_valid() and
+# scraper() can fetch robots.txt/sitemap.xml through utils.download.download
+# - the SAME path Worker uses for every page - never a direct request. The
+# architecture is explicit that bypassing the cache is not allowed, and
+# that applies here just as much as to page fetches.
+_crawler_config = None
+_robots_parsers = {}    # netloc -> urllib.robotparser.RobotFileParser, or None (unavailable - fail open)
+_sitemap_fetched = set()  # netlocs whose sitemap we've already pulled, so we only do it once each
 
 # Module 5: persisted analytics for the report, so a restart during
 # deployment (up to 3 allowed) doesn't throw away report progress.
@@ -57,6 +71,14 @@ MAX_CONTENT_SIZE = 5 * 1024 * 1024  # skip pages whose body is bigger than this
 MAX_PATH_PREFIX_VISITS = 100   # module 3: see is_repeated_pattern_trap
 MIN_WORDS_FOR_REAL_PAGE = 50   # module 3: see is_dead_or_low_value_page
 
+# Extra credit (+2): near-duplicate detection. See compute_simhash /
+# is_near_duplicate_of_recent_pages.
+SIMHASH_BITS = 64
+NEAR_DUP_WINDOW = 50             # compare only against the last N pages,
+                                  # not the entire crawl history (Note 4)
+NEAR_DUP_HAMMING_THRESHOLD = 3    # out of 64 bits; a common SimHash cutoff
+_recent_simhashes = deque(maxlen=NEAR_DUP_WINDOW)
+
 # Module 3 state: lives only for this crawl process. Does NOT persist across
 # restarts the way Frontier's shelve file does.
 # Maps (netloc, first_path_segment) -> set of distinct normalized URLs seen
@@ -106,6 +128,17 @@ def scraper(url, resp):
         if is_repeated_pattern_trap(urlparse(link)):
             continue
         valid_links.append(link)
+
+    # Extra credit (+1): the first time we see a domain, pull its sitemap
+    # and add any URLs it lists - sitemaps often list pages nothing we've
+    # already crawled links to.
+    parsed_current = urlparse(url)
+    if parsed_current.netloc not in _sitemap_fetched:
+        _sitemap_fetched.add(parsed_current.netloc)
+        for sitemap_url in get_sitemap_urls(parsed_current):
+            if is_valid(sitemap_url):
+                valid_links.append(sitemap_url)
+
     return valid_links
 
 
@@ -146,6 +179,9 @@ def extract_next_links(url, resp):
     record_page_visit(base_url, soup)
 
     if is_dead_or_low_value_page(soup):
+        return list()
+
+    if is_near_duplicate_of_recent_pages(soup):
         return list()
 
     next_links = []
@@ -263,11 +299,146 @@ def is_likely_trap(parsed_url):
     return False
 
 
+def set_crawler_config(config):
+    """
+    Called once at startup (from launch.py) so is_allowed_by_robots() and
+    get_sitemap_urls() can fetch robots.txt/sitemap.xml through the cache
+    server. Tests that never call this still work: every function below
+    fails open (treats robots.txt as "allow everything", sitemap as
+    empty) when _crawler_config is None, instead of raising.
+    """
+    global _crawler_config
+    _crawler_config = config
+
+
+def _fetch_text_via_cache(url):
+    """
+    Download `url` through the cache server - utils.download.download,
+    the exact function Worker uses for every page - and return its
+    decoded text, or None if config isn't set, the fetch failed, or the
+    status wasn't 200. Never a direct request: robots.txt/sitemap fetches
+    go through the same architecture as everything else.
+    """
+    if _crawler_config is None:
+        return None
+
+    resp = _cache_download(url, _crawler_config)
+    if resp.status != 200 or resp.raw_response is None or not resp.raw_response.content:
+        return None
+
+    try:
+        return resp.raw_response.content.decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+def get_robots_parser(parsed_url):
+    """
+    Return a urllib.robotparser.RobotFileParser for parsed_url's domain,
+    fetching <scheme>://<netloc>/robots.txt through the cache the first
+    time this domain is seen (cached per-netloc afterwards so it's only
+    ever fetched once per domain). Feeds the fetched text to .parse() -
+    never RobotFileParser.read(), which would fetch directly with
+    urllib.request and bypass the cache.
+    Returns None if robots.txt couldn't be fetched - fail open (treat as
+    allowed), the same way a browser does when robots.txt is missing.
+    """
+    netloc = parsed_url.netloc
+    if netloc in _robots_parsers:
+        return _robots_parsers[netloc]
+
+    robots_url = f"{parsed_url.scheme}://{netloc}/robots.txt"
+    text = _fetch_text_via_cache(robots_url)
+
+    parser = None
+    if text is not None:
+        parser = urllib.robotparser.RobotFileParser()
+        parser.parse(text.splitlines())
+
+    _robots_parsers[netloc] = parser
+    return parser
+
+
+def is_allowed_by_robots(url):
+    """
+    True iff robots.txt for url's domain allows our user agent to fetch
+    it, or robots.txt couldn't be fetched at all (fail open). The cache
+    server already enforces robots.txt on its own (status 608, "Denied by
+    domain robot rules") - checking it ourselves here just means we never
+    waste a request on a URL it would have refused anyway.
+    """
+    parsed = urlparse(url)
+    parser = get_robots_parser(parsed)
+    if parser is None:
+        return True
+
+    user_agent = _crawler_config.user_agent if _crawler_config else "*"
+    return parser.can_fetch(user_agent, url)
+
+
+def _extract_sitemap_locs(xml_text):
+    """
+    Return every <loc> URL in a sitemap or sitemap-index XML document.
+    Namespace-agnostic (sitemap XML almost always declares the
+    http://www.sitemaps.org/schemas/sitemap/0.9 namespace, which turns
+    ElementTree tag names into "{<namespace>}loc" - match on the local
+    name instead of requiring an exact namespace string).
+    """
+    try:
+        root = ElementTree.fromstring(xml_text)
+    except ElementTree.ParseError:
+        return []
+
+    return [
+        el.text.strip()
+        for el in root.iter()
+        if el.tag.rsplit("}", 1)[-1] == "loc" and el.text and el.text.strip()
+    ]
+
+
+def get_sitemap_urls(parsed_url):
+    """
+    Fetch and parse this domain's sitemap, ONCE per domain: use the
+    Sitemap: directive(s) from robots.txt if present, else fall back to
+    <scheme>://<netloc>/sitemap.xml. Handles one level of sitemap-index
+    nesting (a sitemap whose <loc> entries point to further *.xml
+    sitemaps, rather than pages). Returns the list of page URLs found, or
+    [] if no sitemap exists or config isn't set - these are meant to be
+    added to the frontier as an extra discovery path, since sitemaps
+    often list pages nothing else links to.
+    """
+    netloc = parsed_url.netloc
+    scheme = parsed_url.scheme
+
+    parser = get_robots_parser(parsed_url)
+    sitemap_urls = list(parser.site_maps()) if parser and parser.site_maps() else [
+        f"{scheme}://{netloc}/sitemap.xml"]
+
+    page_urls = []
+    for sitemap_url in sitemap_urls:
+        text = _fetch_text_via_cache(sitemap_url)
+        if text is None:
+            continue
+
+        locs = _extract_sitemap_locs(text)
+        # A sitemap INDEX lists further *.xml sitemaps, not pages - fetch
+        # one level of those too rather than treating them as page URLs.
+        sub_sitemaps = [loc for loc in locs if loc.lower().endswith(".xml")]
+        page_urls.extend(loc for loc in locs if loc not in sub_sitemaps)
+        for sub_sitemap_url in sub_sitemaps:
+            sub_text = _fetch_text_via_cache(sub_sitemap_url)
+            if sub_text is not None:
+                page_urls.extend(_extract_sitemap_locs(sub_text))
+
+    return page_urls
+
+
 def is_valid(url):
     """
     Decide whether to crawl this url or not.
     Combine the checks above: scheme check, domain check, extension check,
-    trap heuristics. Return True only if url should be added to the frontier.
+    trap heuristics, robots.txt. Return True only if url should be added
+    to the frontier.
     """
     try:
         parsed = urlparse(url)
@@ -281,6 +452,9 @@ def is_valid(url):
             return False
 
         if is_likely_trap(parsed):
+            return False
+
+        if not is_allowed_by_robots(url):
             return False
 
         return True
@@ -356,6 +530,75 @@ def is_dead_or_low_value_page(soup):
     credit, boilerplate/template detection belongs here too.)
     """
     return get_page_word_count(soup) < MIN_WORDS_FOR_REAL_PAGE
+
+
+def compute_simhash(soup):
+    """
+    Extra credit (+2): from-scratch 64-bit SimHash fingerprint of this
+    page's visible text, built from scratch (no similarity/hashing
+    libraries - Python's built-in hash() is used only as a cheap integer-
+    hashing primitive, the same role hashlib plays for unrelated URL
+    hashing elsewhere in this project, not as "the" similarity algorithm).
+
+    For each distinct content word (via extract_content_words), weighted
+    by how many times it occurs on the page: hash the word to a 64-bit
+    value, then for every one of the 64 bit positions, add the word's
+    weight to a running total if that bit is 1, subtract it if that bit
+    is 0. The final fingerprint's bit i is 1 if that total ended up
+    positive, 0 otherwise.
+
+    Two pages that share most of their words end up with fingerprints
+    differing in only a handful of bits; two unrelated pages differ in
+    roughly half of the 64 bits (by the properties of a good hash
+    function) - that's what makes Hamming distance a useful similarity
+    measure between two fingerprints.
+    """
+    word_counts = Counter(extract_content_words(soup))
+    bit_totals = [0] * SIMHASH_BITS
+
+    for word, weight in word_counts.items():
+        word_hash = hash(word) & ((1 << SIMHASH_BITS) - 1)  # fold to 64 unsigned bits
+        for bit in range(SIMHASH_BITS):
+            if (word_hash >> bit) & 1:
+                bit_totals[bit] += weight
+            else:
+                bit_totals[bit] -= weight
+
+    fingerprint = 0
+    for bit in range(SIMHASH_BITS):
+        if bit_totals[bit] > 0:
+            fingerprint |= (1 << bit)
+    return fingerprint
+
+
+def hamming_distance(a, b):
+    """Number of bit positions where two SimHash fingerprints differ."""
+    return bin(a ^ b).count("1")
+
+
+def is_near_duplicate_of_recent_pages(soup):
+    """
+    Extra credit (+2): True iff this page's SimHash fingerprint is within
+    NEAR_DUP_HAMMING_THRESHOLD bits of ANY fingerprint among the last
+    NEAR_DUP_WINDOW pages seen - i.e. near-identical content to something
+    just crawled (a chain of boilerplate-heavy or templated pages adding
+    no new information). Deliberately compares against a bounded RECENT
+    window, not the entire crawl history, per the assignment's own Note 4
+    hint ("content similarity repetition over a certain amount of chained
+    pages") - full O(n) comparison against every page ever seen would get
+    slower as the crawl grows; a bounded window stays cheap throughout.
+
+    Always records this page's own fingerprint afterwards regardless of
+    the result, so a long chain of near-duplicates is bounded by the
+    comparison window rather than only ever compared against the first
+    page in the chain.
+    """
+    fingerprint = compute_simhash(soup)
+    is_duplicate = any(
+        hamming_distance(fingerprint, seen) <= NEAR_DUP_HAMMING_THRESHOLD
+        for seen in _recent_simhashes)
+    _recent_simhashes.append(fingerprint)
+    return is_duplicate
 
 
 def resolve_base_url(url, resp):
