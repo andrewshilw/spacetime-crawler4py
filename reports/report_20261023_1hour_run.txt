@@ -1,0 +1,126 @@
+1. Unique pages found: 4195
+
+2. Longest page: https://ics.uci.edu/~dsm/dyn/release/files/zImage_paapi (94503 words)
+
+3. 50 most common words:
+s - 19151
+e - 15717
+1 - 15689
+t - 14584
+n - 14369
+ics - 13573
+o - 13102
+2 - 12530
+m - 12395
+d - 12294
+l - 12105
+p - 12000
+c - 11487
+data - 10694
+research - 10622
+g - 9822
+r - 9350
+uci - 9318
+computer - 8783
+0 - 8782
+3 - 8562
+learning - 7844
+10 - 7839
+science - 7700
+university - 7666
+x - 7658
+4 - 7627
+information - 7536
+y - 7492
+k - 7449
+systems - 7448
+w - 7415
+u - 7093
+b - 7073
+f - 6976
+h - 6948
+j - 6862
+v - 6539
+will - 6445
+5 - 6303
+us - 6262
+software - 6061
+2025 - 6053
+events - 6020
+6 - 5755
+irvine - 5740
+can - 5667
+8 - 5631
+q - 5516
+7 - 5287
+
+4. Subdomains found in ics.uci.edu:
+http://accessibility.ics.uci.edu, 6
+http://acoi.ics.uci.edu, 112
+http://archive-beta.ics.uci.edu, 11
+http://archive.ics.uci.edu, 185
+http://asterix.ics.uci.edu, 14
+http://cert.ics.uci.edu, 26
+http://chenli.ics.uci.edu, 11
+http://cloudberry.ics.uci.edu, 6
+http://cml.ics.uci.edu, 130
+http://code.ics.uci.edu, 14
+http://computableplant.ics.uci.edu, 100
+http://courselisting.ics.uci.edu, 2
+http://create.ics.uci.edu, 7
+http://cs.ics.uci.edu, 22
+http://dgillen.ics.uci.edu, 20
+http://ds4all.ics.uci.edu, 9
+http://duttgroup.ics.uci.edu, 132
+http://dynamo.ics.uci.edu, 32
+http://e2.ics.uci.edu, 1
+http://edgelab.ics.uci.edu, 7
+http://emj.ics.uci.edu, 44
+http://evoke.ics.uci.edu, 4
+http://flamingo.ics.uci.edu, 124
+http://fr.ics.uci.edu, 3
+http://grape.ics.uci.edu, 15
+http://graphics.ics.uci.edu, 1
+http://hack.ics.uci.edu, 1
+http://hobbes.ics.uci.edu, 10
+http://hpi.ics.uci.edu, 5
+http://i-sensorium.ics.uci.edu, 5
+http://icde2023.ics.uci.edu, 46
+http://ics.uci.edu, 1820
+http://industryshowcase.ics.uci.edu, 24
+http://informatics.ics.uci.edu, 41
+http://intranet.ics.uci.edu, 99
+http://ipubmed.ics.uci.edu, 1
+http://isg.ics.uci.edu, 233
+http://isi-buds.ics.uci.edu, 5
+http://jgarcia.ics.uci.edu, 40
+http://luci.ics.uci.edu, 4
+http://mailman.ics.uci.edu, 38
+http://malek.ics.uci.edu, 1
+http://mcs.ics.uci.edu, 12
+http://mds.ics.uci.edu, 9
+http://mhcid.ics.uci.edu, 20
+http://mswe.ics.uci.edu, 10
+http://myip.ics.uci.edu, 1
+http://nalini.ics.uci.edu, 9
+http://ngs.ics.uci.edu, 177
+http://oai.ics.uci.edu, 6
+http://password.ics.uci.edu, 9
+http://riscit.ics.uci.edu, 3
+http://sana.ics.uci.edu, 1
+http://scale.ics.uci.edu, 7
+http://seal.ics.uci.edu, 46
+http://sherlock.ics.uci.edu, 7
+http://sparcfire.ics.uci.edu, 1
+http://stairs.ics.uci.edu, 3
+http://stat.ics.uci.edu, 17
+http://summeracademy.ics.uci.edu, 13
+http://support.ics.uci.edu, 1
+http://tastier.ics.uci.edu, 1
+http://tutoring.ics.uci.edu, 5
+http://unite.ics.uci.edu, 10
+http://vision.ics.uci.edu, 172
+http://wics.ics.uci.edu, 224
+http://wiki.ics.uci.edu, 104
+http://www-db.ics.uci.edu, 25
+http://xtune.ics.uci.edu, 6
