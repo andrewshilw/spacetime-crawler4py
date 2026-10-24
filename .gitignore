@@ -108,6 +108,14 @@ venv.bak/
 
 *.full.py
 *.shelve
+*.shelve.db
+*.shelve.dir
+*.shelve.dat
+*.shelve.bak
+
+# Generated at crawl time, not source
+crawl_run.log
+report.txt
 
 # Local AI-assistant context, not part of the submitted crawler
 CLAUDE.md
