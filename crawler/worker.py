@@ -34,9 +34,13 @@ class Worker(Thread):
                 self.logger.info("Frontier is empty. Stopping Crawler.")
                 break
             resp = download(tbd_url, self.config, self.logger)
+            # 600-range statuses come from the cache server itself, and
+            # resp.error says why (e.g. the origin timed out) - log it so
+            # those failures can be diagnosed from the log alone.
+            error_note = f", error: {resp.error}" if resp.error else ""
             self.logger.info(
                 f"Downloaded {tbd_url}, status <{resp.status}>, "
-                f"using cache {self.config.cache_server}.")
+                f"using cache {self.config.cache_server}{error_note}.")
             scraped_urls = scraper.scraper(tbd_url, resp)
             for scraped_url in scraped_urls:
                 self.frontier.add_url(scraped_url)

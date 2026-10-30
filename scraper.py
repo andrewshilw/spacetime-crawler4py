@@ -2,6 +2,7 @@ import re
 import os
 import glob
 import shutil
+import time
 import pickle
 import urllib.robotparser
 from datetime import datetime
@@ -399,7 +400,22 @@ def _fetch_text_via_cache(url):
     if _crawler_config is None:
         return None
 
-    resp = _cache_download(url, _crawler_config)
+    # Politeness: Worker only sleeps AFTER each page, so without this a
+    # robots.txt/sitemap fetch would hit the server immediately after the
+    # page download that triggered it (and back-to-back with any other
+    # robots/sitemap fetches for the same page, or for every host at once
+    # when resuming from frontier.shelve). Sleeping BEFORE each extra fetch
+    # keeps every request >= POLITENESS apart; Worker's own sleep then
+    # covers the gap after the last one. Safe because THREADCOUNT = 1.
+    time.sleep(_crawler_config.time_delay)
+
+    try:
+        resp = _cache_download(url, _crawler_config)
+    except Exception:
+        # download() calls logger.error() on an empty/garbled cache
+        # response, and we pass no logger - fail open instead of letting
+        # that AttributeError kill the Worker thread.
+        return None
     if resp.status != 200 or resp.raw_response is None or not resp.raw_response.content:
         return None
 
