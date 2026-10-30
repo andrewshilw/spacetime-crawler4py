@@ -55,6 +55,7 @@ _analytics_db = None  # lazily loaded - see _get_analytics_db
 # for timing.
 ANALYTICS_SAVE_INTERVAL = 20
 _pages_since_last_save = 0
+TOP_PAGES_KEPT = 10   # longest pages kept for the report, see record_page_visit
 
 # Where backups of analytics.pkl go before --restart wipes the live file,
 # and where regenerate_report_from_backup() looks for one to recover from.
@@ -94,7 +95,7 @@ ALLOWED_DOMAINS = (
 
 MAX_CONTENT_SIZE = 5 * 1024 * 1024  # skip pages whose body is bigger than this
 
-MAX_PATH_PREFIX_VISITS = 100   # module 3: see is_repeated_pattern_trap
+MAX_PATH_PREFIX_VISITS = 300   # module 3: see is_repeated_pattern_trap
 MIN_WORDS_FOR_REAL_PAGE = 50   # module 3: see is_dead_or_low_value_page
 
 # Extra credit (+2): near-duplicate detection. See compute_simhash /
@@ -130,6 +131,22 @@ TRAP_QUERY_KEYS = {
 # looking URL, so is_repeated_pattern_trap only catches it after wasting
 # MAX_PATH_PREFIX_VISITS requests. Catch it directly instead.
 DATE_SEGMENT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$|^\d{4}-\d{2}$")
+# Low-value URL families, all seen in the Oct 29 crawl's analytics. Matched
+# EXACTLY (unlike the substring match on TRAP_QUERY_KEYS) because short keys
+# like "do" or "c" would otherwise match unrelated parameters.
+#   share                  -> WordPress share links, redirect to x.com/facebook
+#   do, rev, ns, tab_*,
+#   sectok                 -> DokuWiki edit/diff/revision/media-manager views
+#   c, o                   -> Apache directory-listing sort orders (?C=M;O=A)
+#   keywords               -> archive.ics.uci.edu dataset search results
+#   redirect_to, reauth    -> WordPress login forms
+#   eventdisplay, post_type -> event-calendar listing views
+LOW_VALUE_QUERY_KEYS = {
+    "share", "do", "rev", "ns", "tab_details", "tab_files", "sectok",
+    "c", "o", "keywords", "redirect_to", "reauth", "eventdisplay", "post_type",
+}
+LOW_VALUE_QUERY_KEY_PREFIXES = ("tribe__ecp_custom",)  # event-calendar filters
+LOW_VALUE_PATH_SEGMENTS = {"wp-login.php", "wp-admin"}
 
 DISALLOWED_EXTENSIONS = re.compile(
     r".*\.(css|js|bmp|gif|jpe?g|ico"
@@ -199,11 +216,17 @@ def extract_next_links(url, resp):
         return list()
 
     try:
-        soup = BeautifulSoup(content, "lxml")
+        soup = BeautifulSoup(decode_utf16_without_bom(content), "lxml")
     except Exception:
         return list()
 
     base_url = resolve_base_url(url, resp)
+
+    # A redirect can land somewhere we would never have requested ourselves
+    # (seen live: ?share=twitter -> x.com, wp-admin -> wp-login.php). Don't
+    # record or follow those pages - only in-scope content counts.
+    if base_url != url and not is_valid(base_url):
+        return list()
 
     # Record analytics for every page we actually got real HTML back for,
     # BEFORE the dead-page check below - a thin/low-value page still counts
@@ -224,6 +247,30 @@ def extract_next_links(url, resp):
         next_links.append(normalize_url(href, base_url=base_url))
 
     return next_links
+
+
+def decode_utf16_without_bom(content):
+    """
+    Return `content` decoded to str if it looks like UTF-16 with no byte
+    order mark, otherwise return it unchanged for BeautifulSoup to detect.
+    Confirmed live: ics.uci.edu/~cs224/ is a Word export in BOM-less
+    UTF-16, which BeautifulSoup misreads as UTF-8 - every letter became its
+    own "word", scoring 84,609 words for a page with 1,774 real ones. In
+    UTF-16, ASCII text has a NUL in every other byte, which real UTF-8
+    HTML never does, so roughly half the sample being NUL gives it away.
+    """
+    if content.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return content
+
+    sample = content[:1024]
+    half = len(sample) // 2
+    if half == 0:
+        return content
+    if sample[1::2].count(0) > half * 0.4:
+        return content.decode("utf-16-le", errors="replace")
+    if sample[0::2].count(0) > half * 0.4:
+        return content.decode("utf-16-be", errors="replace")
+    return content
 
 
 def defragment_url(url):
@@ -318,6 +365,9 @@ def is_likely_trap(parsed_url):
     if any(DATE_SEGMENT_RE.match(segment) for segment in segments):
         return True
 
+    if any(segment.lower() in LOW_VALUE_PATH_SEGMENTS for segment in segments):
+        return True
+
     query_pairs = parse_qsl(parsed_url.query)
     if len(query_pairs) > MAX_QUERY_PARAMS:
         return True
@@ -327,6 +377,11 @@ def is_likely_trap(parsed_url):
     # Tribe-Events-style calendar page).
     if any(trap_key in key.lower() for key, _ in query_pairs for trap_key in TRAP_QUERY_KEYS):
         return True
+
+    for key, _ in query_pairs:
+        key = key.lower()
+        if key in LOW_VALUE_QUERY_KEYS or key.startswith(LOW_VALUE_QUERY_KEY_PREFIXES):
+            return True
 
     return False
 
@@ -802,7 +857,9 @@ def extract_content_words(soup):
     script/style/head/comments) so the two stay consistent.
     """
     words = WORD_RE.findall(_get_visible_text(soup).lower())
-    return [word for word in words if word not in STOPWORDS]
+    # Single characters are mostly tokenizer leftovers (UCI's with a curly
+    # apostrophe splits into "uci" + "s"), not meaningful words.
+    return [word for word in words if len(word) > 1 and word not in STOPWORDS]
 
 
 def record_page_visit(url, soup):
@@ -827,12 +884,24 @@ def record_page_visit(url, soup):
     # fragment-free, but defragment again here so this stays correct even
     # if called with a raw url.
     canonical_url = defragment_url(url)
+
+    # Several URLs can redirect to one page. Count that page once, or its
+    # subdomain total and words are inflated (the Oct 29 crawl overcounted
+    # subdomains by 602 this way).
+    if canonical_url in db["unique_pages"]:
+        return
     db["unique_pages"].add(canonical_url)
 
     word_count = get_page_word_count(soup)
     _, longest_count = db["longest_page"]
     if word_count > longest_count:
         db["longest_page"] = (canonical_url, word_count)
+
+    # Keep the runners-up too, so one bad page can't erase the real answer.
+    top_pages = db.setdefault("top_pages", [])
+    top_pages.append((word_count, canonical_url))
+    top_pages.sort(reverse=True)
+    del top_pages[TOP_PAGES_KEPT:]
 
     for word in extract_content_words(soup):
         db["word_freq"][word] += 1
@@ -870,6 +939,8 @@ def generate_report(output_path="report.txt", analytics_path=None):
     lines.append("1. Unique pages found: {}".format(len(db["unique_pages"])))
     lines.append("")
     lines.append("2. Longest page: {} ({} words)".format(longest_url, longest_count))
+    for word_count, url in db.get("top_pages", [])[1:]:
+        lines.append("   Runner-up: {} ({} words)".format(url, word_count))
     lines.append("")
     lines.append("3. 50 most common words:")
     for word, count in db["word_freq"].most_common(50):

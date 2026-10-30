@@ -1,0 +1,142 @@
+1. Unique pages found: 8569
+
+2. Longest page: https://ics.uci.edu/~cs224/ (84609 words)
+
+3. 50 most common words:
+research - 27821
+ics - 27731
+computer - 19696
+s - 19426
+1 - 19026
+us - 17654
+data - 16937
+science - 16334
+learning - 16028
+information - 15124
+2 - 14535
+irvine - 13944
+students - 13895
+uci - 13850
+will - 13767
+student - 13363
+e - 13299
+university - 12913
+events - 12426
+systems - 12323
+software - 12258
+t - 12207
+html - 12090
+news - 11680
+10 - 11633
+d - 11127
+computing - 11056
+graduate - 10985
+can - 10978
+2026 - 10901
+faculty - 10662
+n - 10643
+p - 10174
+undergraduate - 10017
+uc - 9604
+3 - 9428
+m - 9207
+community - 9194
+time - 8769
+one - 8655
+search - 8504
+4 - 8455
+machine - 8357
+l - 8274
+current - 8205
+project - 8155
+contact - 8077
+c - 7997
+program - 7991
+new - 7962
+
+4. Subdomains found in ics.uci.edu:
+http://accessibility.ics.uci.edu, 6
+http://acoi.ics.uci.edu, 127
+http://aiclub.ics.uci.edu, 5
+http://archive-beta.ics.uci.edu, 11
+http://archive.ics.uci.edu, 185
+http://asterix.ics.uci.edu, 14
+http://bayes-bats.ics.uci.edu, 1
+http://bit.ics.uci.edu, 1
+http://casa.ics.uci.edu, 9
+http://cert.ics.uci.edu, 26
+http://chenli.ics.uci.edu, 15
+http://cloudberry.ics.uci.edu, 6
+http://cml.ics.uci.edu, 317
+http://code.ics.uci.edu, 29
+http://computableplant.ics.uci.edu, 98
+http://courselisting.ics.uci.edu, 2
+http://covid19.ics.uci.edu, 1
+http://cradl.ics.uci.edu, 26
+http://create.ics.uci.edu, 19
+http://cs.ics.uci.edu, 66
+http://dgillen.ics.uci.edu, 35
+http://ds4all.ics.uci.edu, 12
+http://duttgroup.ics.uci.edu, 140
+http://dynamo.ics.uci.edu, 28
+http://e2.ics.uci.edu, 1
+http://edgelab.ics.uci.edu, 13
+http://emj.ics.uci.edu, 44
+http://evoke.ics.uci.edu, 6
+http://fellowships.ics.uci.edu, 2
+http://flamingo.ics.uci.edu, 91
+http://fr.ics.uci.edu, 3
+http://grape.ics.uci.edu, 33
+http://graphics.ics.uci.edu, 2
+http://hack.ics.uci.edu, 1
+http://hai.ics.uci.edu, 6
+http://hobbes.ics.uci.edu, 10
+http://hpi.ics.uci.edu, 12
+http://i-sensorium.ics.uci.edu, 5
+http://iasl.ics.uci.edu, 28
+http://icde2023.ics.uci.edu, 64
+http://ics.uci.edu, 3391
+http://ieee.ics.uci.edu, 10
+http://industryshowcase.ics.uci.edu, 35
+http://informatics.ics.uci.edu, 154
+http://insite.ics.uci.edu, 9
+http://intranet.ics.uci.edu, 87
+http://ipubmed.ics.uci.edu, 1
+http://isg.ics.uci.edu, 371
+http://isi-buds.ics.uci.edu, 5
+http://jgarcia.ics.uci.edu, 40
+http://luci.ics.uci.edu, 16
+http://mailman.ics.uci.edu, 38
+http://malek.ics.uci.edu, 1
+http://mcs.ics.uci.edu, 24
+http://mds.ics.uci.edu, 17
+http://mhcid.ics.uci.edu, 42
+http://mswe.ics.uci.edu, 18
+http://myip.ics.uci.edu, 1
+http://nalini.ics.uci.edu, 13
+http://ngs.ics.uci.edu, 1419
+http://oai.ics.uci.edu, 6
+http://oc-covid-model.ics.uci.edu, 2
+http://password.ics.uci.edu, 9
+http://radicle.ics.uci.edu, 1
+http://riscit.ics.uci.edu, 3
+http://sana.ics.uci.edu, 4
+http://scale.ics.uci.edu, 7
+http://seal.ics.uci.edu, 46
+http://sherlock.ics.uci.edu, 7
+http://sparcfire.ics.uci.edu, 3
+http://sprout.ics.uci.edu, 1
+http://stairs.ics.uci.edu, 3
+http://stat.ics.uci.edu, 77
+http://studentcouncil.ics.uci.edu, 3
+http://summeracademy.ics.uci.edu, 20
+http://support.ics.uci.edu, 1
+http://tad.ics.uci.edu, 2
+http://tastier.ics.uci.edu, 1
+http://tutoring.ics.uci.edu, 5
+http://unite.ics.uci.edu, 18
+http://vision.ics.uci.edu, 569
+http://wics.ics.uci.edu, 710
+http://wiki.ics.uci.edu, 105
+http://www-db.ics.uci.edu, 23
+http://xtune.ics.uci.edu, 6
